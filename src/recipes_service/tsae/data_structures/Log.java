@@ -29,6 +29,9 @@ import java.util.Vector;
 import java.util.concurrent.ConcurrentHashMap;
 
 import recipes_service.data.Operation;
+import recipes_service.data.OperationType;
+//LSim logging system imports sgeag@2017
+//import lsim.coordinator.LSimCoordinator;
 import edu.uoc.dpcs.lsim.logger.LoggerManager.Level;
 import lsim.library.api.LSimLogger;
 
@@ -37,139 +40,173 @@ import lsim.library.api.LSimLogger;
  * December 2012
  *
  */
-public class Log implements Serializable {
+public class Log implements Serializable{
+	// Only for the zip file with the correct solution of phase1.Needed for the logging system for the phase1. sgeag_2018p 
+//	private transient LSimCoordinator lsim = LSimFactory.getCoordinatorInstance();
+	// Needed for the logging system sgeag@2017
+//	private transient LSimWorker lsim = LSimFactory.getWorkerInstance();
+
 	private static final long serialVersionUID = -4864990265268259700L;
-
 	/**
-	 * This class implements a log that stores the operations
-	 * received by a client.
+	 * This class implements a log, that stores the operations
+	 * received  by a client.
 	 * They are stored in a ConcurrentHashMap (a hash table),
-	 * that stores a list of operations for each member of the group.
+	 * that stores a list of operations for each member of 
+	 * the group.
 	 */
-	private ConcurrentHashMap<String, List<Operation>> log = new ConcurrentHashMap<String, List<Operation>>();
+        private ConcurrentHashMap<String, List<Operation>> log= new ConcurrentHashMap<String, List<Operation>>();
+        private final List<String> participants = new Vector<String>();
 
-	//AUX
-	private long extractSeqNumber(Timestamp t) {
-		try {
-			String[] parts = t.toString().split(":");
-			return Long.parseLong(parts[1].trim());
-		} catch (Exception e) {
-			return Timestamp.NULL_TIMESTAMP_SEQ_NUMBER;
-		}
-	}
-	//AUX
-
-	public Log(List<String> participants) {
-		//hacer el log vacío para participantes
-		for (Iterator<String> it = participants.iterator(); it.hasNext();) {
-			log.put(it.next(), new Vector<Operation>());
-		}
-	}
+        public Log(List<String> participants){
+                // create an empty log
+                for (Iterator<String> it = participants.iterator(); it.hasNext(); ){
+                        String id = it.next();
+                        this.participants.add(id);
+                        log.put(id, new Vector<Operation>());
+                }
+        }
 
 	/**
-	 * Inserts an operation into the log. Operations are inserted in order.
-	 * If the last operation for the user is not the previous operation than the one
+	 * inserts an operation into the log. Operations are 
+	 * inserted in order. If the last operation for 
+	 * the user is not the previous operation than the one 
 	 * being inserted, the insertion will fail.
 	 * 
 	 * @param op
 	 * @return true if op is inserted, false otherwise.
 	 */
-	public synchronized boolean add(Operation op) {
-		//.. PR1
-		String hostid = op.getTimestamp().getHostid();
-		List<Operation> ops = log.get(hostid);
+        public synchronized boolean add(Operation op){
+                if (op == null || op.getType() != OperationType.ADD){
+                        return false;
+                }
+                if (op.getTimestamp() == null || op.getTimestamp().getHostid() == null){
+                        return false;
+                }
 
-		if (ops.isEmpty()) {
-			//operación obligatoria
-			if (extractSeqNumber(op.getTimestamp()) == 0) {
-				ops.add(op);
-			}
-		} else {
-			//si se necesitase 2ª operación
-			long lastSeq = extractSeqNumber(ops.get(ops.size() - 1).getTimestamp());
-			if (extractSeqNumber(op.getTimestamp()) == lastSeq + 1) {
-				ops.add(op);
-			}
-		}
+                String hostId = op.getTimestamp().getHostid();
+                List<Operation> sublog = log.get(hostId);
+                if (sublog == null){
+                        sublog = new Vector<Operation>();
+                        log.put(hostId, sublog);
+                        if (!participants.contains(hostId)){
+                                participants.add(hostId);
+                        }
+                }
 
-		LSimLogger.log(Level.TRACE, "Log updated:\n" + this);
-		return true;
-	}
+                if (sublog.isEmpty()){
+                        sublog.add(op);
+                        return true;
+                }
 
+                Operation lastOp = sublog.get(sublog.size() - 1);
+                if (lastOp == null || lastOp.getTimestamp() == null){
+                        return false;
+                }
+
+                long diff = op.getTimestamp().compare(lastOp.getTimestamp());
+                if (diff == 1){
+                        sublog.add(op);
+                        return true;
+                }
+
+                // duplicated or out-of-order operation
+                return false;
+        }
+	
 	/**
 	 * Checks the received summary (sum) and determines the operations
 	 * contained in the log that have not been seen by
 	 * the proprietary of the summary.
 	 * Returns them in an ordered list.
-	 * 
 	 * @param sum
 	 * @return list of operations
 	 */
-	public synchronized List<Operation> listNewer(TimestampVector sum) {
-		//.. PR1
-		List<Operation> newerOps = new Vector<>();
-		for (String host : log.keySet()) {
-			List<Operation> hostOps = log.get(host);
-			if (hostOps == null)
-				continue;
+        public synchronized List<Operation> listNewer(TimestampVector sum){
+                List<Operation> operations = new Vector<Operation>();
 
-			long knownSeq = extractSeqNumber(sum.getLast(host));
+                for (String hostId : participants){
+                        List<Operation> sublog = log.get(hostId);
+                        if (sublog == null){
+                                continue;
+                        }
 
-			for (Operation op : hostOps) {
-				if (extractSeqNumber(op.getTimestamp()) > knownSeq)
-					newerOps.add(op);
-			}
-		}
-		return newerOps;
-	}
+                        Timestamp lastSeen = null;
+                        if (sum != null){
+                                lastSeen = sum.getLast(hostId);
+                        }
 
+                        for (Operation operation : sublog){
+                                if (lastSeen == null || operation.getTimestamp().compare(lastSeen) > 0){
+                                        operations.add(operation);
+                                }
+                        }
+                }
+
+                return operations;
+        }
+	
 	/**
 	 * Removes from the log the operations that have
 	 * been acknowledged by all the members
-	 * of the group, according to the provided ackSummary.
-	 * 
+	 * of the group, according to the provided
+	 * ackSummary. 
 	 * @param ack: ackSummary.
 	 */
-	public void purgeLog(TimestampMatrix ack) {
-		// intentionally left empty for PR1 phase 1
+public synchronized void purgeLog(TimestampMatrix ack){
+		if (ack == null) {
+			return;
+		}
+		TimestampVector min = ack.minTimestampVector();
+		for (String host : log.keySet()) {
+			List<Operation> hostOps = log.get(host);
+			if (hostOps == null) {
+				continue;
+			}
+			Timestamp minTimestamp = min.getLast(host);
+			if (minTimestamp == null) {
+				continue;
+			}
+			for (Iterator<Operation> it = hostOps.iterator(); it.hasNext();) {
+				Operation op = it.next();
+				if (op.getTimestamp().compare(minTimestamp) <= 0) {
+					it.remove();
+				}
+			}
+		}
 	}
-
 	/**
 	 * equals
 	 */
 	@Override
-	public synchronized boolean equals(Object obj) {
-		if (this == obj)
-			return true;
-		if (!(obj instanceof Log))
-			return false;
-		Log other = (Log) obj;
-		if (!log.keySet().equals(other.log.keySet()))
-			return false;
-		for (String host : log.keySet()) {
-			List<Operation> l1 = log.get(host);
-			List<Operation> l2 = other.log.get(host);
-			if (l1.size() != l2.size())
-				return false;
-			for (int i = 0; i < l1.size(); i++)
-				if (!l1.get(i).equals(l2.get(i)))
-					return false;
-		}
-		return true;
-	}
+        public synchronized boolean equals(Object obj) {
+
+                if (this == obj)
+                        return true;
+                if (obj == null)
+                        return false;
+                if (getClass() != obj.getClass())
+                        return false;
+                Log other = (Log) obj;
+                return log.equals(other.log);
+        }
+
+        @Override
+        public synchronized int hashCode() {
+                return log.hashCode();
+        }
 
 	/**
 	 * toString
 	 */
 	@Override
 	public synchronized String toString() {
-		String name = "";
-		for (Enumeration<List<Operation>> en = log.elements(); en.hasMoreElements();) {
-			List<Operation> sublog = en.nextElement();
-			for (ListIterator<Operation> en2 = sublog.listIterator(); en2.hasNext();) {
-				name += en2.next().toString() + "\n";
+		String name="";
+		for(List<Operation> sublog: log.values()){
+			for(ListIterator<Operation> en2=sublog.listIterator(); en2.hasNext();){
+				name+=en2.next().toString()+"\n";
 			}
 		}
+		
 		return name;
 	}
 }

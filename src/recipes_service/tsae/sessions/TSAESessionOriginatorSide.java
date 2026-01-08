@@ -86,11 +86,10 @@ public class TSAESessionOriginatorSide extends TimerTask{
 	 * with the partner server n
 	 * @param n
 	 */
-	private void sessionTSAE(Host n){
-		int current_session_number = session_number.incrementAndGet();
-		if (n == null) return;
-		
-		LSimLogger.log(Level.TRACE, "[TSAESessionOriginatorSide] [session: "+current_session_number+"] TSAE session");
+	private void sessionTSAE(Host n) {
+        int current_session_number = session_number.incrementAndGet();
+        if (n == null) return;
+	LSimLogger.log(Level.TRACE, "[TSAESessionOriginatorSide] [session: "+current_session_number+"] TSAE session");
 		
 		try {
 			Socket socket = new Socket(n.getAddress(), n.getPort());
@@ -101,7 +100,12 @@ public class TSAESessionOriginatorSide extends TimerTask{
 			TimestampMatrix localAck = null;
 
 			// Send to partner: local's summary and ack
-			Message	msg = new MessageAErequest(localSummary, localAck);
+				if (SimulationData.getInstance().purge()) {
+					serverData.refreshAck();
+				}
+				localSummary = serverData.getSummaryClone();
+				localAck = SimulationData.getInstance().purge() ? serverData.getAckClone() : null;
+				Message	msg = new MessageAErequest(localSummary, localAck);
 			msg.setSessionNumber(current_session_number);
             out.writeObject(msg);
 			LSimLogger.log(Level.TRACE, "[TSAESessionOriginatorSide] [session: "+current_session_number+"] sent message: "+msg);
@@ -110,21 +114,33 @@ public class TSAESessionOriginatorSide extends TimerTask{
 			msg = (Message) in.readObject();
 			LSimLogger.log(Level.TRACE, "[TSAESessionOriginatorSide] [session: "+current_session_number+"] received message: "+msg);
 			while (msg.type() == MsgType.OPERATION){
-				// ...
+				MessageOperation msgOp = (MessageOperation) msg;
+				Operation op = msgOp.getOperation();
+				serverData.applyOperation(op);
 				msg = (Message) in.readObject();
 				LSimLogger.log(Level.TRACE, "[TSAESessionOriginatorSide] [session: "+current_session_number+"] received message: "+msg);
 			}
 
             // receive partner's summary and ack
 			if (msg.type() == MsgType.AE_REQUEST){
-				// ...
+				MessageAErequest msgAE = (MessageAErequest) msg;
+				TimestampVector partnerSummary = msgAE.getSummary();
+					if (SimulationData.getInstance().purge()) {
+						TimestampMatrix partnerAck = msgAE.getAck();
+						serverData.updateAckMax(partnerAck);
+					}
 				
 				// send operations
-				
-				//...
-					msg.setSessionNumber(current_session_number);
-					out.writeObject(msg);
-					LSimLogger.log(Level.TRACE, "[TSAESessionOriginatorSide] [session: "+current_session_number+"] sent message: "+msg);
+				if (partnerSummary != null) {
+					List<Operation> operations = serverData.listNewerOperations(partnerSummary);
+					for (Iterator<Operation> it = operations.iterator(); it.hasNext();) {
+						Operation op = it.next();
+						msg = new MessageOperation(op);
+						msg.setSessionNumber(current_session_number);
+						out.writeObject(msg);
+						LSimLogger.log(Level.TRACE, "[TSAESessionOriginatorSide] [session: "+current_session_number+"] sent message: "+msg);
+					}
+				}
 
 				// send and "end of TSAE session" message
 				msg = new MessageEndTSAE();  
@@ -136,7 +152,7 @@ public class TSAESessionOriginatorSide extends TimerTask{
 				msg = (Message) in.readObject();
 				LSimLogger.log(Level.TRACE, "[TSAESessionOriginatorSide] [session: "+current_session_number+"] received message: "+msg);
 				if (msg.type() == MsgType.END_TSAE){
-					// 
+					serverData.purgeLog();
 				}
 
 			}			
@@ -152,4 +168,4 @@ public class TSAESessionOriginatorSide extends TimerTask{
 		
 		LSimLogger.log(Level.TRACE, "[TSAESessionOriginatorSide] [session: "+current_session_number+"] End TSAE session");
 	}
-}
+}       
