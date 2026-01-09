@@ -85,7 +85,25 @@ public class ServerData {
 
 	// TODO: esborrar aquesta estructura de dades
 	// tombstones: timestamp of removed operations
-	List<Timestamp> tombstones = new Vector<Timestamp>();
+	private static class Tombstone implements java.io.Serializable {
+		private static final long serialVersionUID = 1L;
+		private Timestamp recipeTimestamp;
+		private Timestamp removeTimestamp;
+		public Tombstone(Timestamp recipeTimestamp, Timestamp removeTimestamp) {
+			this.recipeTimestamp = recipeTimestamp;
+			this.removeTimestamp = removeTimestamp;
+		}
+		public Timestamp getRecipeTimestamp() {
+			return recipeTimestamp;
+		}
+		public Timestamp getRemoveTimestamp() {
+			return removeTimestamp;
+		}
+		public void setRemoveTimestamp(Timestamp removeTimestamp) {
+			this.removeTimestamp = removeTimestamp;
+		}
+	}
+	private List<Tombstone> tombstones = new Vector<Tombstone>();
 	
 	// end: true when program should end; false otherwise
 	private boolean end;
@@ -96,7 +114,7 @@ public class ServerData {
 	public ServerData(){
 	}
 	
-	private synchronized void purgeTombstones() {
+private synchronized void purgeTombstones() {
 	    if (ack == null) {
 	        return;
 	    }
@@ -109,17 +127,22 @@ public class ServerData {
 	    }
 	    
 	    // Crear una nueva lista para tombstones que deben mantenerse
-	    List<Timestamp> newTombstones = new Vector<Timestamp>();
+	    List<Tombstone> newTombstones = new Vector<Tombstone>();
 	    
 	    for (int i = 0; i < tombstones.size(); i++) {
-	        Timestamp tombstone = tombstones.get(i);
-	        Timestamp minTs = sum.getLast(tombstone.getHostid());
+	        Tombstone tombstone = tombstones.get(i);
+	        Timestamp removeTs = tombstone.getRemoveTimestamp();
+	        if (removeTs == null) {
+	            newTombstones.add(tombstone);
+	            continue;
+	        }
+	        Timestamp minTs = sum.getLast(removeTs.getHostid());
 	        
 	        // Mantener el tombstone si su timestamp es mayor que el mínimo conocido
-	        if (minTs != null && tombstone.compare(minTs) > 0) {
+	        if (minTs != null && removeTs.compare(minTs) > 0) {
 	            newTombstones.add(tombstone);
 	        }
-	        // Si tombstone.compare(minTs) <= 0, significa que todos conocen
+	        // Si removeTs.compare(minTs) <= 0, significa que todos conocen
 	        // la eliminación, por lo que se puede purgar
 	    }
 	    
@@ -220,9 +243,7 @@ public synchronized void removeRecipe(String recipeTitle) {
 			this.recipes.remove(recipeTitle);
 		    
 			// Añadir a tombstones (para evitar readiciones)
-			if (!this.tombstones.contains(recipeTimestamp)) {
-				this.tombstones.add(recipeTimestamp);
-			}
+			addTombstone(recipeTimestamp, removeTimestamp);
 		    
 			LSimLogger.log(Level.TRACE, 
 				"Recipe '" + recipeTitle + "' has been removed. Timestamp: " + removeTimestamp);
@@ -234,30 +255,27 @@ public synchronized void removeRecipe(String recipeTitle) {
  * Debe ser llamado desde TSAESessionOriginatorSide y TSAESessionPartnerSide
  */
 private void applyRemoveOperationReceived(RemoveOperation removeOp) {
-    String recipeTitle = removeOp.getRecipeTitle();
-    Timestamp recipeTimestamp = removeOp.getRecipeTimestamp();
-    
-    Recipe recipe = recipes.get(recipeTitle);
-    
-    // Verificar si la receta existe y tiene el mismo timestamp
-    if (recipe != null && recipe.getTimestamp().equals(recipeTimestamp)) {
-        // Eliminar la receta
-        recipes.remove(recipeTitle);
-        
-        // Añadir a tombstones
-        if (!tombstones.contains(recipeTimestamp)) {
-            tombstones.add(recipeTimestamp);
-        }
-        
-        LSimLogger.log(Level.TRACE, 
-            "Applied RemoveOperation for recipe: " + recipeTitle);
-    } else if (recipe == null) {
-        // La receta no existe - puede que ya fue eliminada o aún no añadida
-        // Guardar en tombstones para prevenir adición futura
-        if (!tombstones.contains(recipeTimestamp)) {
-            tombstones.add(recipeTimestamp);
-        }
-    }
+	String recipeTitle = removeOp.getRecipeTitle();
+	Timestamp recipeTimestamp = removeOp.getRecipeTimestamp();
+	Timestamp removeTimestamp = removeOp.getTimestamp();
+	
+	Recipe recipe = recipes.get(recipeTitle);
+	
+	// Verificar si la receta existe y tiene el mismo timestamp
+	if (recipe != null && recipe.getTimestamp().equals(recipeTimestamp)) {
+		// Eliminar la receta
+		recipes.remove(recipeTitle);
+		
+		// Añadir a tombstones
+		addTombstone(recipeTimestamp, removeTimestamp);
+		
+		LSimLogger.log(Level.TRACE, 
+			"Applied RemoveOperation for recipe: " + recipeTitle);
+	} else if (recipe == null) {
+		// La receta no existe - puede que ya fue eliminada o aún no añadida
+		// Guardar en tombstones para prevenir adición futura
+		addTombstone(recipeTimestamp, removeTimestamp);
+	}
 }
 
 /**
@@ -265,26 +283,18 @@ private void applyRemoveOperationReceived(RemoveOperation removeOp) {
  * Debe verificar tombstones antes de añadir
  */
 private void applyAddOperationReceived(AddOperation addOp) {
-    Recipe recipe = addOp.getRecipe();
-    
-    // Verificar si esta receta fue eliminada (está en tombstones)
-    boolean wasRemoved = false;
-    for (Timestamp ts : tombstones) {
-        if (ts.equals(recipe.getTimestamp())) {
-            wasRemoved = true;
-            break;
-        }
-    }
-    
-    if (!wasRemoved) {
-        // Añadir la receta solo si no está en tombstones
-        recipes.add(recipe);
-        LSimLogger.log(Level.TRACE, 
-            "Applied AddOperation for recipe: " + recipe.getTitle());
-    } else {
-        LSimLogger.log(Level.TRACE, 
-            "Skipped AddOperation for removed recipe: " + recipe.getTitle());
-    }
+	Recipe recipe = addOp.getRecipe();
+	
+	// Verificar si esta receta fue eliminada (está en tombstones)
+	if (!isTombstoned(recipe.getTimestamp())) {
+		// Añadir la receta solo si no está en tombstones
+		recipes.add(recipe);
+		LSimLogger.log(Level.TRACE, 
+			"Applied AddOperation for recipe: " + recipe.getTitle());
+	} else {
+		LSimLogger.log(Level.TRACE, 
+			"Skipped AddOperation for removed recipe: " + recipe.getTitle());
+	}
 }
 // ****************************************************************************
 // *** operations to get the TSAE data structures. Used to send to evaluation
@@ -350,8 +360,8 @@ public synchronized void purgeLog() {
 }
 
 private boolean isTombstoned(Timestamp timestamp) {
-	for (Timestamp tombstone : tombstones) {
-		if (tombstone.equals(timestamp)) {
+	for (Tombstone tombstone : tombstones) {
+		if (tombstone != null && tombstone.getRecipeTimestamp() != null && tombstone.getRecipeTimestamp().equals(timestamp)) {
 			return true;
 		}
 	}
@@ -359,9 +369,25 @@ private boolean isTombstoned(Timestamp timestamp) {
 }
 
 private void addTombstone(Timestamp timestamp) {
-	if (!isTombstoned(timestamp)) {
-		tombstones.add(timestamp);
+	addTombstone(timestamp, null);
+}
+
+private void addTombstone(Timestamp recipeTimestamp, Timestamp removeTimestamp) {
+	if (recipeTimestamp == null) {
+		return;
 	}
+	for (Tombstone tombstone : tombstones) {
+		if (tombstone != null && tombstone.getRecipeTimestamp() != null && tombstone.getRecipeTimestamp().equals(recipeTimestamp)) {
+			if (removeTimestamp != null) {
+				Timestamp currentRemove = tombstone.getRemoveTimestamp();
+				if (currentRemove == null || removeTimestamp.compare(currentRemove) > 0) {
+					tombstone.setRemoveTimestamp(removeTimestamp);
+				}
+			}
+			return;
+		}
+	}
+	tombstones.add(new Tombstone(recipeTimestamp, removeTimestamp));
 }
 
 private void applyAddOperation(AddOperation op) {
@@ -376,7 +402,7 @@ private void applyAddOperation(AddOperation op) {
 }
 
 private void applyRemoveOperation(RemoveOperation op) {
-	addTombstone(op.getRecipeTimestamp());
+	addTombstone(op.getRecipeTimestamp(), op.getTimestamp());
 	Recipe existing = recipes.get(op.getRecipeTitle());
 	if (existing != null && existing.getTimestamp().equals(op.getRecipeTimestamp())) {
 		recipes.remove(op.getRecipeTitle());

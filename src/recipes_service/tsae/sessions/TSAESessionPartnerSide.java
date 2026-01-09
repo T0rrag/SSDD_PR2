@@ -137,4 +137,3 @@ public class TSAESessionPartnerSide extends Thread {
 		LSimLogger.log(Level.TRACE, "[TSAESessionPartnerSide] [session: "+current_session_number+"] End TSAE session");
 	}
 }
-    
