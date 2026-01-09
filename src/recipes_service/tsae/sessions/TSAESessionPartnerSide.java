@@ -78,10 +78,8 @@ public class TSAESessionPartnerSide extends Thread {
 				if (msg.type() == MsgType.AE_REQUEST){
 					MessageAErequest msgAE = (MessageAErequest) msg;
 					TimestampVector originatorSummary = msgAE.getSummary();
-					if (SimulationData.getInstance().purge()) {
-						TimestampMatrix originatorAck = msgAE.getAck();
-						serverData.updateAckMax(originatorAck);
-					}
+					TimestampMatrix originatorAck = msgAE.getAck();
+					serverData.updateAckMax(originatorAck);
 				
 	            // send operations
 				if (originatorSummary != null) {
@@ -97,11 +95,9 @@ public class TSAESessionPartnerSide extends Thread {
 
 
 				// send to originator: local's summary and ack
-					if (SimulationData.getInstance().purge()) {
-						serverData.refreshAck();
-					}
+					serverData.refreshAck();
 					TimestampVector localSummary = serverData.getSummaryClone();
-					TimestampMatrix localAck = SimulationData.getInstance().purge() ? serverData.getAckClone() : null;
+					TimestampMatrix localAck = serverData.getAckClone();
 				msg = new MessageAErequest(localSummary, localAck);
 				msg.setSessionNumber(current_session_number);
 	 	        out.writeObject(msg);

@@ -100,12 +100,10 @@ public class TSAESessionOriginatorSide extends TimerTask{
 			TimestampMatrix localAck = null;
 
 			// Send to partner: local's summary and ack
-				if (SimulationData.getInstance().purge()) {
-					serverData.refreshAck();
-				}
-				localSummary = serverData.getSummaryClone();
-				localAck = SimulationData.getInstance().purge() ? serverData.getAckClone() : null;
-				Message	msg = new MessageAErequest(localSummary, localAck);
+			serverData.refreshAck();
+			localSummary = serverData.getSummaryClone();
+			localAck = serverData.getAckClone();
+			Message	msg = new MessageAErequest(localSummary, localAck);
 			msg.setSessionNumber(current_session_number);
             out.writeObject(msg);
 			LSimLogger.log(Level.TRACE, "[TSAESessionOriginatorSide] [session: "+current_session_number+"] sent message: "+msg);
@@ -125,10 +123,8 @@ public class TSAESessionOriginatorSide extends TimerTask{
 			if (msg.type() == MsgType.AE_REQUEST){
 				MessageAErequest msgAE = (MessageAErequest) msg;
 				TimestampVector partnerSummary = msgAE.getSummary();
-					if (SimulationData.getInstance().purge()) {
-						TimestampMatrix partnerAck = msgAE.getAck();
-						serverData.updateAckMax(partnerAck);
-					}
+				TimestampMatrix partnerAck = msgAE.getAck();
+				serverData.updateAckMax(partnerAck);
 				
 				// send operations
 				if (partnerSummary != null) {

@@ -311,13 +311,13 @@ public synchronized TimestampMatrix getAckClone() {
 }
 
 public synchronized void refreshAck() {
-	if (ack != null && SimulationData.getInstance().purge()) {
+	if (ack != null) {
 		ack.update(id, summary);
 	}
 }
 
 public synchronized void updateAckMax(TimestampMatrix otherAck) {
-	if (ack != null && otherAck != null && SimulationData.getInstance().purge()) {
+	if (ack != null && otherAck != null) {
 		ack.updateMax(otherAck);
 	}
 }
@@ -342,7 +342,7 @@ public synchronized void applyOperation(Operation op) {
 }
 
 public synchronized void purgeLog() {
-	if (!SimulationData.getInstance().purge()) {
+	if (ack == null) {
 		return;
 	}
 	log.purgeLog(ack);

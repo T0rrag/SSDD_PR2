@@ -54,9 +54,8 @@ public class TimestampMatrix implements Serializable{
 	 * @param node
 	 * @return the timestamp vector of node in this timestamp matrix
 	 */
-        synchronized TimestampVector getTimestampVector(String node){
-        	return null;
-            return timestampMatrix.get(node);
+        public synchronized TimestampVector getTimestampVector(String node){
+        	return timestampMatrix.get(node);
         }
 	
 	/**
@@ -94,23 +93,30 @@ public class TimestampMatrix implements Serializable{
 	 * @return a timestamp vector containing, for each node, 
 	 * the timestamp known by all participants
 	 */
-		if (timestampMatrix.isEmpty()) {
-			return new TimestampVector(List.copyOf(timestampMatrix.keySet()));
-		}
-		Iterator<TimestampVector> iterator = timestampMatrix.values().iterator();
-		TimestampVector minVector = iterator.next().clone();
-		while (iterator.hasNext()) {
-			minVector.mergeMin(iterator.next());
+	public synchronized TimestampVector minTimestampVector(){
+		TimestampVector minVector = new TimestampVector(new Vector<String>(participants));
+		boolean first = true;
+		for (String node : participants){
+			TimestampVector row = timestampMatrix.get(node);
+			if (row == null){
+				continue;
+			}
+			if (first){
+				minVector = row.clone();
+				first = false;
+			}else{
+				minVector.mergeMin(row);
+			}
 		}
 		return minVector;
-        }
+	}
 	
 	/**
 	 * clone
 	 */
         public synchronized TimestampMatrix clone(){
-    		TimestampMatrix copy = new TimestampMatrix(List.copyOf(timestampMatrix.keySet()));
-    		for (String node : timestampMatrix.keySet()) {
+    		TimestampMatrix copy = new TimestampMatrix(new Vector<String>(participants));
+    		for (String node : participants) {
     			TimestampVector vector = timestampMatrix.get(node);
     			if (vector != null) {
     				copy.timestampMatrix.put(node, vector.clone());

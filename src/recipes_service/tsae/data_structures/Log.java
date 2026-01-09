@@ -76,7 +76,7 @@ public class Log implements Serializable{
 	 * @return true if op is inserted, false otherwise.
 	 */
         public synchronized boolean add(Operation op){
-                if (op == null || op.getType() != OperationType.ADD){
+                if (op == null){
                         return false;
                 }
                 if (op.getTimestamp() == null || op.getTimestamp().getHostid() == null){
